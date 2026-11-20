@@ -1,73 +1,170 @@
-# TEST Management: scheduling module
+# TEST Management — Continuous Assessment Platform
 
-Node/Express (TypeScript) + React. This module lets lecturers fully control TEST timing (date, start and end times, duration, batches, batch timing and student assignment), with every rule **enforced on the server**. Students get a server-timed countdown that carries on through refreshes and dropped connections, and submits automatically when time runs out.
+A starter production-oriented web application for lecturers and students to create, schedule, deliver and analyse continuous assessment TESTS. All visible product terminology uses **TEST**.
 
-All user-facing wording says **TEST** (see `shared/terms.ts`). Internal names (tables, routes, variables) use `test` where they need a name at all.
+## Technology
 
-## Run it
+- Python 3.11+
+- FastAPI REST API
+- SQLAlchemy 2 ORM
+- SQLite for local development; MySQL 8+ supported through PyMySQL
+- JWT authentication in an HttpOnly cookie
+- Argon2 password hashing
+- Jinja2 templates and responsive vanilla JavaScript interface
+- Alembic migration scaffolding
 
-```bash
-cd server && npm install && npm run dev        # API on :4000, seeds demo data
-cd client && npm install && npm run dev        # UI on :5173 (proxies /api)
-```
+## Features implemented
 
-Production: `cd client && npm run build`, then `cd server && npm start` serves the API and the built UI on :4000.
+- Lecturer/admin and student roles
+- Student self-registration API (student role only)
+- Lecturer/admin account bootstrap script
+- Create draft TESTS and add manual questions
+- Optional AI TEST question generation using an OpenAI API key
+- Publish a TEST after questions have been added
+- Create configurable batches and assign students by student IDs
+- Edit the overall TEST schedule and independently edit upcoming batch schedules
+- Confirmation preview in the lecturer interface before schedule changes
+- Lock/unlock upcoming batches
+- Cancel eligible TESTS and postpone TESTS without active batches
+- Audit records for schedule edits, batch lock changes and cancellation/postponement
+- Server-generated session start and expiry timestamps
+- A student's allocated duration is snapshotted when the session starts
+- Browser refresh restores the existing session and server expiry
+- Per-student question ordering is randomized and stored for the session
+- Answers are saved to the backend
+- Expired sessions are finalized on the server when the student next reconnects or makes a request
+- Automatic scoring and TEST results
+- Lecturer dashboard, student portal, results, TEST analytics and active-session overview APIs
+- Student account registration and lecturer-facing student directory
+- Copyable TEST portal links and schedule audit history
+- Tests for key scheduling invariants
 
-The demo data is generated relative to "now", so there's always one Active, one Upcoming, one Draft and one Completed TEST. Use **Signed in as** in the top bar to switch between lecturer and student.
+## Important scheduling rules
 
-Tests: `cd server && npm test` runs 15 rule tests against a controllable clock.
+1. A student's timer starts only when the backend creates their TEST session.
+2. The backend stores `started_at`, `allocated_minutes` and `expires_at`. The frontend timer is display-only.
+3. A student's active session is not changed by edits to the TEST or another batch.
+4. An overall schedule edit shifts and updates only batches still in `scheduled` state. Active and completed batches are left unchanged.
+5. A batch can be independently edited only while it is still scheduled and unlocked.
+6. TEST questions are editable only while the TEST is a draft. The session stores the TEST version used at start.
+7. The backend rejects answer saves after the server expiry timestamp and finalizes the session.
 
-## What lecturers can do
-
-| Where | What |
-|---|---|
-| **TEST Schedule** (`/lecturer/schedule`) | Every TEST grouped as Active / Upcoming / Draft / Completed / Cancelled TESTS; live "closes in" / "opens in" per batch; active and submitted session counts; Edit, Postpone, Lock/Unlock, Publish, Cancel; copy the TEST Link |
-| **Edit TEST Schedule** | TEST Date, Start Time, End Time, Duration; add, remove or rename batches; per-batch start, end and duration; move students between batches. Locked fields are disabled, and the reason is shown |
-| **Confirmation** | Before anything is saved, the server returns an old → new comparison, plus any errors, warnings and how many students will be notified. Changes apply only on **Apply changes** |
-| **TEST History** | Audit log of every scheduling action: who, when, what changed (old → new) and the reason |
-| **Create TEST** | AI TEST Generation / Manual TEST Generation, schedule, number of batches (the window is split automatically), students |
-
-## Scheduling rules (server-enforced, `server/src/schedule.ts`)
-
-1. **TEST-level timing** (date, start, end, duration, time zone) can be edited while the TEST is a draft, or after publishing **until the first student starts**. After that it's locked.
-2. **Each batch** can be edited independently until it has *started*: a student has begun in it, or (once published) its end time has passed. Active and completed batches are frozen; the others stay editable.
-3. **Running sessions are never changed.** Each student's start time, deadline and allocated minutes are snapshotted when they press Start. Deadline = `min(start + batch duration, batch end)`.
-4. Changing the TEST date or start time **moves the batches with it** (optional). Changing the TEST duration updates every batch that was using it. Access windows are read from the database on every request, so new times take effect immediately.
-5. Batches must sit inside the TEST window. A duration can't be longer than its window. A published TEST can't be moved into the past, and its end must be in the future. A window can cross midnight (an end time earlier than the start time means the next day), up to 24 hours.
-6. Students who have started can't be moved. Students can't be added to a batch that has ended.
-7. **Optimistic locking**: an apply must carry the version the lecturer reviewed. If someone else changed the schedule in between, the server returns 409 and the lecturer reviews again.
-8. **Lock** blocks new starts only; active sessions continue. **Cancel** is allowed only if no student has started. **Postpone** moves the whole TEST later, through the same review step.
-9. Every applied change writes an audit row and, for published TESTS, an in-app notification plus a queued email row (`notifications` table) for each affected student.
-
-## Student timer (`server/src/attempts.ts`, `client/src/pages/Student.tsx`)
-
-- The server decides the deadline. The client only displays it, using a clock anchored to server time with `performance.now()`. Changing the device clock does nothing. The clock resyncs every 20s, when the connection returns, and when the tab regains focus.
-- A refresh resumes the same session (`POST /start` is idempotent).
-- Answers autosave and are also kept on the device while offline.
-- At zero the client submits. The server also auto-submits independently: a sweeper runs every 5 seconds, and any read of an expired session closes it. Answers sent more than 5 seconds after the deadline are rejected.
-
-## Plugging into your app
-
-- **Auth**: `server/src/app.ts` uses a demo `x-user-id` header. Replace that middleware with your session/JWT so it sets `req.user = { id, name, email, role }`.
-- **Email**: rows with `channel = 'email'` in `notifications` are the outbox. Point your mailer at them and set `sent_at`.
-- **Questions / results**: the `questions_json` column is a placeholder for your AI or manual question bank.
-- **Multiple server instances**: the rules depend on SQLite's single-writer transactions. On Postgres/MySQL, wrap `applySchedule`/`startAttempt` in a transaction and lock the TEST row (`SELECT … FOR UPDATE`).
-
-## Renaming "Examination" → "TEST" in other code
+## Run locally
 
 ```bash
-node scripts/rename-terminology.mjs ../your-app                 # dry run, prints every change
-node scripts/rename-terminology.mjs ../your-app --apply --report changes.csv
-node scripts/rename-terminology.mjs ../your-app --include-exam  # also convert Exam/Exams
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# macOS/Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
+python create_user.py
+uvicorn app.main:app --reload
 ```
 
-It changes only text people read: string literals, JSX text, template text and JSON values. Identifiers, routes, database names, object keys, URLs and class names are left alone.
+Open `http://127.0.0.1:8000`.
 
-## API (lecturer)
+- Lecturer dashboard: `/dashboard`
+- Student portal: `/student`
+- API documentation: `/docs`
+- Health check: `/health`
 
-`GET /api/lecturer/tests` · `POST /api/lecturer/tests` · `GET /api/lecturer/tests/:id` ·
-`POST …/:id/schedule/preview` · `POST …/:id/schedule/apply` (`expectedVersion`, `confirm: true`) ·
-`POST …/:id/publish|lock|unlock|cancel` · `GET …/:id/audit` · `GET /api/lecturer/audit`
+The database is created automatically for a new local SQLite database.
 
-Student: `GET /api/student/tests` · `POST /api/student/tests/:id/start` · `GET /api/student/attempts/:id` ·
-`PUT …/answers` · `POST …/submit` · `GET /api/time`
+## Configure MySQL
+
+Create a MySQL database and a least-privilege database user, then set `DATABASE_URL` in `.env`:
+
+```env
+DATABASE_URL=mysql+pymysql://test_app:YOUR_PASSWORD@127.0.0.1:3306/test_management?charset=utf8mb4
+```
+
+Use a strong unique `SECRET_KEY`, set `COOKIE_SECURE=true` behind HTTPS, and set `ENVIRONMENT=production` before deployment. Never commit `.env` or production secrets.
+
+## Create lecturer/admin accounts
+
+Run:
+
+```bash
+python create_user.py
+```
+
+Choose `lecturer` or `admin`. Public self-registration deliberately creates student accounts only.
+
+## Student registration
+
+The student registration API is `POST /api/auth/register`:
+
+```json
+{
+  "full_name": "Student Name",
+  "email": "student@example.com",
+  "password": "a-long-unique-password",
+  "role": "student",
+  "matric_number": "FPA/BCH/25/3-0001"
+}
+```
+
+Students must be assigned to a TEST batch by an authorized lecturer/admin using `POST /api/tests/{test_id}/batches/{batch_id}/assign` with `{ "student_ids": [1, 2] }`.
+
+## API workflow
+
+1. Lecturer signs in at `POST /api/auth/login`.
+2. Create a TEST using `POST /api/tests` with a title, schedule, duration, batch count and optional question array.
+3. Add questions using `POST /api/tests/{test_id}/questions`.
+4. Assign student IDs to batches using `POST /api/tests/{test_id}/batches/{batch_id}/assign`.
+5. Publish using `POST /api/tests/{test_id}/publish`.
+6. Edit overall schedule using `GET /api/tests/{test_id}/schedule/preview` followed by `PATCH /api/tests/{test_id}/schedule`.
+7. Edit an eligible batch using `PATCH /api/tests/{test_id}/batches/{batch_id}/schedule`.
+8. Student signs in and starts using `POST /api/student/tests/{test_id}/start` during their assigned batch window.
+9. Fetch session questions from `GET /api/student/sessions/{session_id}` and save answers using `POST /api/student/sessions/{session_id}/answer`.
+10. Submit using `POST /api/student/sessions/{session_id}/submit`. Expired sessions are finalized by the backend.
+
+## AI TEST generation
+
+Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL` in the server environment. The lecturer UI can request draft questions by topic. Generated questions are inserted into the selected draft TEST; lecturers should review all generated content and correct answers before publishing.
+
+AI generation is optional. Manual TEST creation and delivery do not require an AI API key.
+
+## Run tests
+
+```bash
+pytest -q
+```
+
+## Database migrations
+
+Alembic scaffolding is included. For an existing deployment, create and review migrations before applying schema changes:
+
+```bash
+alembic revision --autogenerate -m "describe schema change"
+alembic upgrade head
+```
+
+Do not rely on `create_all()` to alter an existing production database schema.
+
+## Before production deployment
+
+This repository package is a runnable first implementation, not a claim of completed third-party security certification. Before real institutional use:
+
+- Use HTTPS and secure cookies.
+- Configure a strong secret and production MySQL credentials.
+- Generate and review the first Alembic migration; deploy schema changes through migrations.
+- Add institutional email verification, password reset, and account invitation workflows.
+- Add rate limiting, CSRF protection appropriate to the deployment topology, security headers, and structured monitoring.
+- Configure automated encrypted backups and a restore drill.
+- Add load/concurrency testing for simultaneous session starts and submissions against the chosen MySQL isolation level.
+- Review privacy, retention, accessibility, and institutional data-protection requirements.
+- Validate AI-generated questions and answer keys before publishing.
+
+## Repository upload
+
+Extract this package into the root of `TEST-Continuous-Assessment-` so `README.md`, `requirements.txt`, `app/`, `tests/` and `create_user.py` are at the repository root. Commit the source files, but do not upload `.env`, database files, virtual environments or API keys.
+
+## Current release scope
+
+This package delivers the core single-institution TEST workflow and lecturer ownership boundaries. It is a foundation for the wider SaaS roadmap, not yet a complete multi-tenant commercial SaaS release. Institution/department tenant isolation, subscription billing, email/SMS delivery, bulk roster imports, downloadable report exports, advanced proctoring, and full institution-level user administration should be implemented and security-reviewed as subsequent modules before onboarding multiple institutions.
+
+The current automated suite covers password/token helpers, schedule immutability rules, batch schedule edits, and an end-to-end student attempt. Run `python -m pytest -q` after installing the requirements.

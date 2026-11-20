@@ -1,0 +1,1 @@
+Run `alembic revision --autogenerate -m "initial schema"` after configuring DATABASE_URL, review the generated migration, then run `alembic upgrade head`.
