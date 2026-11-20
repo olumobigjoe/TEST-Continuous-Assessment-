@@ -8,6 +8,7 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=10, max_length=128)
     role: Role = Role.STUDENT
     matric_number: str | None = None
+    institution_code: str | None = Field(default=None, max_length=32)
 
 class LoginIn(BaseModel):
     email: EmailStr

@@ -9,7 +9,7 @@ A starter production-oriented web application for lecturers and students to crea
 - SQLAlchemy 2 ORM
 - SQLite for local development; MySQL 8+ supported through PyMySQL
 - JWT authentication in an HttpOnly cookie
-- Argon2 password hashing
+- PBKDF2-HMAC-SHA256 password hashing (600,000 iterations)
 - Jinja2 templates and responsive vanilla JavaScript interface
 - Alembic migration scaffolding
 
@@ -168,3 +168,99 @@ Extract this package into the root of `TEST-Continuous-Assessment-` so `README.m
 This package delivers the core single-institution TEST workflow and lecturer ownership boundaries. It is a foundation for the wider SaaS roadmap, not yet a complete multi-tenant commercial SaaS release. Institution/department tenant isolation, subscription billing, email/SMS delivery, bulk roster imports, downloadable report exports, advanced proctoring, and full institution-level user administration should be implemented and security-reviewed as subsequent modules before onboarding multiple institutions.
 
 The current automated suite covers password/token helpers, schedule immutability rules, batch schedule edits, and an end-to-end student attempt. Run `python -m pytest -q` after installing the requirements.
+
+# Version 2 — Institution-ready administration
+
+V2 adds an institution tenancy foundation while retaining the V1 TEST delivery and scheduling engine.
+
+## V2 additions
+
+- Institution records with unique institution codes and active/inactive state.
+- Institution administrator role, provisioned by a platform administrator.
+- Tenant association for users and TESTS; institution administrators see TESTS within their institution, while lecturers retain ownership restrictions.
+- Department creation and institution-scoped department listing/assignment.
+- CSV student import (UTF-8, maximum 2 MB) with duplicate checks and institution seat-limit enforcement.
+- One-time student account setup invitations. Imported accounts cannot sign in until the student accepts the invitation and sets a password. Tokens are stored hashed and expire after 72 hours; share returned tokens with students through a secure channel.
+- Institution overview counts and subscription metadata.
+- CSV export of TEST results.
+- Institution administration page at `/institution-admin`.
+- Alembic migration `0002_institution_saas` for V1 database upgrades.
+
+## V2 onboarding workflow
+
+1. Create the platform administrator with `python create_user.py` and sign in.
+2. Create an institution using `POST /api/v2/institutions`:
+
+```json
+{"name":"Example College","code":"EXCOL","email_domain":"example.edu.ng"}
+```
+
+3. Provision an institution administrator using `POST /api/v2/institutions/{institution_id}/users`:
+
+```json
+{"full_name":"Institution Administrator","email":"admin@example.edu.ng","password":"Use-A-Strong-Password","role":"institution_admin"}
+```
+
+4. Sign in as the institution administrator and open `/institution-admin`.
+5. Create departments and import a CSV with these exact columns:
+
+```csv
+full_name,email,matric_number
+Ada Student,ada@example.edu.ng,EXCOL/001
+Tunde Student,tunde@example.edu.ng,EXCOL/002
+```
+
+6. Securely distribute each returned one-time setup token. Students configure their own passwords at `POST /api/v2/auth/accept-invitation`:
+
+```json
+{"token":"ONE_TIME_TOKEN_FROM_IMPORT","password":"Student-Chooses-A-Strong-Password"}
+```
+
+7. Create TESTS as usual. New TESTS inherit the lecturer's institution. Student assignment checks institution membership.
+8. Export a TEST result sheet from `GET /api/v2/tests/{test_id}/results.csv`.
+
+## V2 API summary
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v2/institutions` | Create an institution (platform admin) |
+| `POST /api/v2/institutions/{id}/users` | Provision institution admin or lecturer |
+| `GET /api/v2/institution` | Institution profile and counts |
+| `POST /api/v2/departments` | Create a department |
+| `GET /api/v2/departments` | List institution departments |
+| `PATCH /api/v2/users/{id}/department` | Assign a user to a department |
+| `POST /api/v2/students/import` | Import student roster CSV |
+| `POST /api/v2/auth/accept-invitation` | Set password using one-time invitation |
+| `GET /api/v2/tests/{id}/results.csv` | Download TEST results CSV |
+| `GET /api/v2/subscription` | Read subscription metadata |
+| `PATCH /api/v2/subscription` | Update plan metadata (platform admin) |
+
+## Upgrade an existing V1 database
+
+Back up the database first. Set the production `DATABASE_URL`, then run:
+
+```bash
+alembic upgrade head
+```
+
+The V2 migration conditionally adds missing V2 columns and tables. Review it against a staging copy of your production database before applying it to live institutional data. Do not run `Base.metadata.create_all()` as a substitute for migrations on an existing database.
+
+## Subscription and SaaS billing boundary
+
+V2 includes subscription records, plan/status metadata and seat-limit enforcement during bulk import. It does **not** process payments, issue invoices, or connect to a payment provider. Those actions require a separately configured payment integration (for example Paystack or Flutterwave), verified webhook signatures, idempotent payment events, and reconciliation tests. Do not mark an institution as paid based solely on a browser request.
+
+## V2 verification
+
+Run:
+
+```bash
+pytest -q
+node --check app/static/institution.js
+python -m compileall -q app
+```
+
+The automated suite covers the existing TEST workflow and scheduling invariants plus institution onboarding, department creation, CSV import, invitation acceptance and single-use token enforcement.
+
+## Production-readiness boundary
+
+V2 is a tested development release, not a completed compliance/security certification. Before onboarding real institutions, add verified email delivery for invitations, password reset, CSRF protection for cookie-authenticated state-changing routes, rate limiting, structured audit trails for administrative membership changes, encrypted backups, monitoring, concurrency tests on MySQL, and a formal privacy/data-retention review. The current invitation tokens are returned to the authorized importing lecturer/admin; configure an email delivery service before large-scale deployment.

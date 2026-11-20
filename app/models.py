@@ -9,6 +9,7 @@ def utcnow():
 
 class Role(str, enum.Enum):
     ADMIN = "admin"
+    INSTITUTION_ADMIN = "institution_admin"
     LECTURER = "lecturer"
     STUDENT = "student"
 
@@ -33,6 +34,37 @@ class SessionStatus(str, enum.Enum):
     SUBMITTED = "submitted"
     EXPIRED = "expired"
 
+class Institution(Base):
+    __tablename__ = "institutions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    email_domain: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class Department(Base):
+    __tablename__ = "departments"
+    __table_args__ = (UniqueConstraint("institution_id", "name", name="uq_department_institution_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    institution_id: Mapped[int] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(140))
+    code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+class InstitutionSubscription(Base):
+    __tablename__ = "institution_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    institution_id: Mapped[int] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), unique=True)
+    plan: Mapped[str] = mapped_column(String(40), default="starter")
+    status: Mapped[str] = mapped_column(String(30), default="trial")
+    seat_limit: Mapped[int] = mapped_column(Integer, default=100)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -42,12 +74,26 @@ class User(Base):
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.STUDENT)
     matric_number: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    institution_id: Mapped[int | None] = mapped_column(ForeignKey("institutions.id"), nullable=True, index=True)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    password_setup_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StudentInvitation(Base):
+    __tablename__ = "student_invitations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 class Test(Base):
     __tablename__ = "tests"
     id: Mapped[int] = mapped_column(primary_key=True)
     lecturer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    institution_id: Mapped[int | None] = mapped_column(ForeignKey("institutions.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(200))
     course_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
